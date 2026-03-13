@@ -33,19 +33,20 @@ try
     builder.Configuration.Sources.Clear();
     builder.Configuration.AddIniFile(iniPath, optional: true, reloadOnChange: false);
 
-    // Bind typed settings
+    // Bind typed settings — fallbacks use same baseDir-relative paths as the INI template
+    string dataRoot = Path.Combine(baseDir, "data");
     builder.Services.Configure<AppSettings>(opts =>
     {
         opts.Dicom.AeTitle = builder.Configuration["Dicom:AeTitle"] ?? "OPENDICOM";
         if (int.TryParse(builder.Configuration["Dicom:Port"], out int port))
             opts.Dicom.Port = port;
 
-        opts.Paths.GdtInputFolder = builder.Configuration["Paths:GdtInputFolder"]
-            ?? @"C:\OpenDicom\gdt_in";
-        opts.Paths.GdtOutputFolder = builder.Configuration["Paths:GdtOutputFolder"]
-            ?? @"C:\OpenDicom\gdt_out";
+        opts.Paths.GdtInputFolder   = builder.Configuration["Paths:GdtInputFolder"]
+            ?? Path.Combine(dataRoot, "gdt_in");
+        opts.Paths.GdtOutputFolder  = builder.Configuration["Paths:GdtOutputFolder"]
+            ?? Path.Combine(dataRoot, "gdt_out");
         opts.Paths.DicomStorageFolder = builder.Configuration["Paths:DicomStorageFolder"]
-            ?? @"C:\OpenDicom\storage";
+            ?? Path.Combine(dataRoot, "storage");
 
         if (int.TryParse(builder.Configuration["Worklist:EntryTtlHours"], out int ttl))
             opts.Worklist.EntryTtlHours = ttl;
