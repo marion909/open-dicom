@@ -143,7 +143,7 @@ public sealed class MainForm : Form
     {
         var p = AutoPanel();
         AddRowBrowse(p, 0, "GDT Input:",  _txtGdtIn,  browse: true);
-        AddRowBrowse(p, 1, "GDT Output:", _txtGdtOut, browse: false);
+        AddRowBrowse(p, 1, "GDT Output:", _txtGdtOut, browse: true);
         AddRowFilePicker(p, 2, "Test-Bild:", _txtImagePath,
             "Bilddateien|*.jpg;*.jpeg;*.png;*.bmp;*.tif;*.tiff|Alle Dateien|*.*");
         return p;
@@ -602,10 +602,10 @@ public sealed class MainForm : Form
         inner.Controls.Add(txt);
         inner.Controls.Add(btn);
         p.Controls.Add(inner);
-        p.Height = (row + 1) * 34;
     }
 
-    private static Panel AutoPanel() => new() { AutoSize = true, Padding = new Padding(4) };
+    private static FlowLayoutPanel AutoPanel() => new()
+        { AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.TopDown, Padding = new Padding(4) };
 
     private void AddRow(Panel p, int row, string label, Control ctrl)
     {
@@ -617,7 +617,6 @@ public sealed class MainForm : Form
         inner.Controls.Add(lbl);
         inner.Controls.Add(ctrl);
         p.Controls.Add(inner);
-        p.Height = (row + 1) * 34;
     }
 
     private void AddRowBrowse(Panel p, int row, string label, TextBox txt, bool browse)
@@ -644,7 +643,6 @@ public sealed class MainForm : Form
             inner.Controls.Add(btn);
         }
         p.Controls.Add(inner);
-        p.Height = (row + 1) * 34;
     }
 
     private static GroupBox GroupBox(string title, Panel content)
