@@ -87,6 +87,7 @@ try
 }
 catch (Exception ex)
 {
+    try { File.WriteAllText(Path.Combine(logDir, "crash.txt"), ex.ToString()); } catch { }
     startupLog.LogCritical(ex, "OpenDicom terminated unexpectedly");
     return 1;
 }
@@ -125,7 +126,7 @@ static void EnsureIniExists(string iniPath, string baseDir)
         Port=11112
 
         [Paths]
-        ; Ordner, in dem das KIS/RIS .gdt-Dateien (Satzart 6301) ablegt
+        ; Ordner, in dem das AIS .gdt-Dateien (Satzart 6301) ablegt
         GdtInputFolder={dataRoot}\gdt_in
         ; Ordner, in dem der Server .gdt-Antwortdateien (Satzart 6310) ablegt
         GdtOutputFolder={dataRoot}\gdt_out

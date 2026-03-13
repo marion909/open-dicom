@@ -10,8 +10,8 @@ Kostenloser DICOM-Server für Windows mit **Modality Worklist (C-FIND)** und **B
 |---|---|
 | **DICOM C-FIND** | Modality Worklist – Abfragen durch beliebige DICOM-SCUs (Geräte, Viewer) |
 | **DICOM C-STORE** | Empfängt DICOM-Bilder, speichert `.dcm` + extrahiert lesbares `.png` |
-| **GDT 2.1 Eingang** | Satzart 6301 – FileSystemWatcher legt automatisch Worklist-Eintrag an |
-| **GDT 2.1 Ausgang** | Satzart 6310 – nach C-STORE geschrieben; FK 8132 zeigt auf das PNG-Bild |
+| **GDT 2.1 Eingang** | Satzart 6301 – AIS legt `.gdt`-Datei ab, FileSystemWatcher legt Worklist-Eintrag an |
+| **GDT 2.1 Ausgang** | Satzart 6310 – nach C-STORE an AIS zurückgeschrieben; FK 8132 zeigt auf das PNG-Bild |
 | **Windows Service** | Läuft als Dienst (`install.bat`) oder manuell (`start.bat`) |
 | **Erster Start** | Erstellt `service.ini` und alle Datenordner automatisch |
 | **TestTool** | WinForms-GUI zum Testen des kompletten Ablaufs (GDT schreiben → Worklist → C-STORE → GDT-Antwort) |
@@ -51,7 +51,7 @@ AeTitle=OPENDICOM        ; AE-Title des Servers (max. 16 Zeichen)
 Port=11112               ; DICOM-Port (Standard: 11112)
 
 [Paths]
-GdtInputFolder=C:\OpenDicom\gdt_in      ; KIS/RIS legt hier .gdt-Dateien ab (Satzart 6301)
+GdtInputFolder=C:\OpenDicom\gdt_in      ; AIS legt hier .gdt-Dateien ab (Satzart 6301)
 GdtOutputFolder=C:\OpenDicom\gdt_out    ; Server schreibt hier .gdt-Antworten (Satzart 6310)
 DicomStorageFolder=C:\OpenDicom\storage ; DICOM-Bilder (.dcm + .png)
 
@@ -70,7 +70,7 @@ Die Datei wird beim ersten Start mit obigen Standardwerten **automatisch erstell
 ## GDT-Workflow
 
 ```
-KIS/RIS                    OpenDicom-Server              DICOM-Gerät / Viewer
+AIS                        OpenDicom-Server              DICOM-Gerät / Viewer
    │                              │                              │
    │── Satzart 6301 ──────────────▶│                              │
    │   (Patient + Auftrag)        │── Worklist-Eintrag anlegen   │
@@ -155,9 +155,21 @@ dotnet publish OpenDicom.TestTool\OpenDicom.TestTool.csproj -c Release -o C:\Ope
 ```
 open-dicom/
 ├── OpenDicom/                  # Server
+│   ├── DicomCore/
+│   │   ├── DicomDataset.cs         # Explicit/Implicit VR LE read+write
+│   │   ├── DicomTag.cs             # Tag-Konstanten
+│   │   ├── DicomVR.cs / DicomUids.cs / DicomUidGenerator.cs
+│   │   └── DicomFileWriter.cs      # DICOM Part-10 Datei schreiben
+│   ├── Network/
+│   │   ├── Pdu.cs                  # PDU lesen/schreiben, P-DATA-Fragmentierung
+│   │   ├── AssociatePdu.cs         # A-ASSOCIATE-RQ parsen, AC/RJ bauen
+│   │   ├── DicomConnection.cs      # Zustandsautomat pro Client (C-ECHO/C-FIND/C-STORE)
+│   │   └── DicomServer.cs          # TcpListener-Wrapper
 │   ├── Dicom/
-│   │   ├── CombinedDicomScp.cs     # C-FIND + C-STORE + PNG-Extraktion
+│   │   ├── DicomHandler.cs         # C-FIND, C-STORE, PNG-Extraktion
 │   │   └── DicomServerService.cs   # BackgroundService-Wrapper
+│   ├── Logging/
+│   │   └── FileLoggerProvider.cs   # Rolling-File-Logger (BlockingCollection-Queue)
 │   ├── Gdt/
 │   │   ├── GdtParser.cs            # Satzart 6301 einlesen (Win-1252)
 │   │   ├── GdtRecord.cs            # Datenmodell mit DICOM-Konvertierung
@@ -187,10 +199,11 @@ open-dicom/
 ## Technologie
 
 - **.NET 8** – Worker Service, self-contained, win-x64, PublishSingleFile
-- **fo-dicom 5.1.2** – DICOM-Protokoll (C-FIND, C-STORE)
+- **Eigene DICOM-Implementierung** – BCL-only, kein fo-dicom (C-FIND, C-STORE, P-DATA-Fragmentierung)
 - **System.Drawing.Common** – PNG-Extraktion aus DICOM-Pixeldaten
-- **Serilog** – Logging in Datei + Windows Event Log
+- **Microsoft.Extensions.Logging** – Rolling-File-Logger + Windows Event Log
 - **GDT 2.1** – Windows-1252, hard CR LF, byte-genaue Längenfeldberechnung
+- **AIS-Integration** – Österreichisches Arztinformationssystem via GDT 2.1 Satzarten 6301/6310
 
 ---
 

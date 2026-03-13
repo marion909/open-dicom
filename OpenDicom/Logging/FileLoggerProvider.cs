@@ -44,7 +44,9 @@ public sealed class FileLoggerProvider : ILoggerProvider
                 {
                     _writer?.Flush();
                     _writer?.Dispose();
-                    _writer = new StreamWriter(path, append: true, encoding: System.Text.Encoding.UTF8)
+                    _writer = new StreamWriter(
+                        new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite),
+                        System.Text.Encoding.UTF8)
                     {
                         AutoFlush = true
                     };

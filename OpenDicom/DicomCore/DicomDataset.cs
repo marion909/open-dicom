@@ -89,6 +89,56 @@ public sealed class DicomDataset
     /// </summary>
     public byte[] ToBytes() => WriteDataset(this);
 
+    /// <summary>
+    /// Serialize this dataset as Implicit VR Little Endian bytes.
+    /// Used when the negotiated transfer syntax is Implicit VR LE (1.2.840.10008.1.2).
+    /// </summary>
+    public byte[] ToBytesImplicit() => WriteDatasetImplicit(this);
+
+    private static byte[] WriteDatasetImplicit(DicomDataset ds)
+    {
+        using var ms = new MemoryStream();
+        using var w  = new BinaryWriter(ms, Encoding.ASCII, leaveOpen: true);
+        foreach (var el in ds._elements)
+            WriteElementImplicit(w, el);
+        return ms.ToArray();
+    }
+
+    private static void WriteElementImplicit(BinaryWriter w, DataElement el)
+    {
+        w.Write(el.Tag.Group);
+        w.Write(el.Tag.Element);
+
+        if (el.VR == DicomVR.SQ)
+        {
+            w.Write(0xFFFFFFFFu); // undefined length SQ
+            if (el.SequenceItems != null)
+            {
+                foreach (var item in el.SequenceItems)
+                {
+                    w.Write((ushort)0xFFFE); w.Write((ushort)0xE000);
+                    w.Write(0xFFFFFFFFu);
+                    byte[] itemBytes = WriteDatasetImplicit(item);
+                    w.Write(itemBytes);
+                    w.Write((ushort)0xFFFE); w.Write((ushort)0xE00D); w.Write(0u);
+                }
+            }
+            w.Write((ushort)0xFFFE); w.Write((ushort)0xE0DD); w.Write(0u);
+            return;
+        }
+
+        byte[] value = el.Value;
+        if (value.Length % 2 != 0)
+        {
+            var padded = new byte[value.Length + 1];
+            Array.Copy(value, padded, value.Length);
+            padded[value.Length] = el.VR is DicomVR.OB or DicomVR.OW ? (byte)0 : (byte)' ';
+            value = padded;
+        }
+        w.Write((uint)value.Length);
+        w.Write(value);
+    }
+
     private static byte[] WriteDataset(DicomDataset ds)
     {
         using var ms = new MemoryStream();
@@ -309,6 +359,15 @@ public sealed class DicomDataset
 
     private static string KnownVR(DicomTag tag) => tag switch
     {
+        // ── Group 0000: DIMSE command fields (always Implicit VR LE, binary US/UI) ──
+        var t when t == DicomTag.AffectedSOPClassUID          => DicomVR.UI,
+        var t when t == DicomTag.CommandField                 => DicomVR.US,
+        var t when t == DicomTag.MessageID                    => DicomVR.US,
+        var t when t == DicomTag.MessageIDBeingRespondedTo    => DicomVR.US,
+        var t when t == DicomTag.CommandDataSetType           => DicomVR.US,
+        var t when t == DicomTag.Status                       => DicomVR.US,
+        var t when t == DicomTag.AffectedSOPInstanceUID       => DicomVR.UI,
+        // ── Patient / Study / Image ──────────────────────────────────────────────
         var t when t == DicomTag.PatientID               => DicomVR.LO,
         var t when t == DicomTag.PatientName             => DicomVR.PN,
         var t when t == DicomTag.PatientBirthDate        => DicomVR.DA,

@@ -85,7 +85,7 @@ public sealed class WorklistStore
 
     private static bool MatchesWildcard(string value, string? pattern)
     {
-        if (pattern == null || pattern == "*") return true;
+        if (string.IsNullOrEmpty(pattern) || pattern == "*") return true;
         // Einfaches Wildcard-Matching (* = beliebig viele, ? = ein Zeichen)
         string regexPattern = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
             .Replace(@"\*", ".*")

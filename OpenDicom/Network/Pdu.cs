@@ -62,7 +62,7 @@ internal static class Pdu
     }
 
     /// <summary>Read P-DATA-TF variable items from a PData PDU body.</summary>
-    public static IEnumerable<(byte PresentationContextId, byte[] Fragment, bool IsCommand)>
+    public static IEnumerable<(byte PresentationContextId, byte[] Fragment, bool IsCommand, bool IsLast)>
         ParsePDataItems(byte[] pduData)
     {
         int pos = 0;
@@ -75,17 +75,17 @@ internal static class Pdu
             pos += 4;
             if (pos + itemLength > pduData.Length) break;
 
-            byte pcId    = pduData[pos];
-            byte mhByte  = pduData[pos + 1];
+            byte pcId      = pduData[pos];
+            byte mhByte    = pduData[pos + 1];
             bool isCommand = (mhByte & 0x01) == 0x01;
-            bool isLast    = (mhByte & 0x02) == 0x02; // unused for now
+            bool isLast    = (mhByte & 0x02) == 0x02;
 
             int fragLen = (int)itemLength - 2;
             byte[] fragment = new byte[fragLen];
             Array.Copy(pduData, pos + 2, fragment, 0, fragLen);
             pos += (int)itemLength;
 
-            yield return (pcId, fragment, isCommand);
+            yield return (pcId, fragment, isCommand, isLast);
         }
     }
 

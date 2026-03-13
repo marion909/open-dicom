@@ -22,6 +22,7 @@ internal sealed class DicomServer : IAsyncDisposable
         _handler  = handler;
         _log      = log;
         _listener = new TcpListener(IPAddress.Any, port);
+        _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
     }
 
     public void Start()

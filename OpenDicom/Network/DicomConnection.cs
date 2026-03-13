@@ -98,9 +98,11 @@ internal sealed class DicomConnection
         _log.LogInformation("Association accepted with {Count} presentation context(s)", accepted.Count);
 
         // ── PDU loop ────────────────────────────────────────────────────
-        // Per-PC reassembly buffers for command and dataset
-        var cmdBuffers  = new Dictionary<byte, List<byte>>();
-        var dataBuffers = new Dictionary<byte, List<byte>>();
+        // Per-PC reassembly state: track fragments and "last received" flags
+        var cmdBufs  = new Dictionary<byte, List<byte>>();
+        var dataBufs = new Dictionary<byte, List<byte>>();
+        var cmdDone  = new HashSet<byte>(); // pcIds where last command fragment received
+        var dataDone = new HashSet<byte>(); // pcIds where last dataset fragment received
 
         while (!ct.IsCancellationRequested)
         {
@@ -117,52 +119,53 @@ internal sealed class DicomConnection
 
             if (pkt.Value.Type != Pdu.PData) continue;
 
-            foreach (var (pcId, fragment, isCommand) in Pdu.ParsePDataItems(pkt.Value.Data))
+            foreach (var (pcId, fragment, isCommand, isLast) in Pdu.ParsePDataItems(pkt.Value.Data))
             {
                 if (isCommand)
                 {
-                    if (!cmdBuffers.TryGetValue(pcId, out var cb))
-                        cmdBuffers[pcId] = cb = new List<byte>();
-                    cb.AddRange(fragment);
+                    if (!cmdBufs.ContainsKey(pcId)) cmdBufs[pcId] = new List<byte>();
+                    cmdBufs[pcId].AddRange(fragment);
+                    if (isLast) cmdDone.Add(pcId);
                 }
                 else
                 {
-                    if (!dataBuffers.TryGetValue(pcId, out var db))
-                        dataBuffers[pcId] = db = new List<byte>();
-                    db.AddRange(fragment);
+                    if (!dataBufs.ContainsKey(pcId)) dataBufs[pcId] = new List<byte>();
+                    dataBufs[pcId].AddRange(fragment);
+                    if (isLast) dataDone.Add(pcId);
                 }
             }
 
-            // Check if any command is complete (bit 1 of MessageHeader)
-            // We determine "complete" by parsing the command dataset:
-            // if CommandDataSetType == 0x0101 there is no dataset → dispatch now.
-            // Otherwise wait until dataset arrives.
-            foreach (var kv in cmdBuffers.ToList())
+            // Dispatch any command whose last fragment has arrived
+            foreach (byte pcId in cmdDone.ToList())
             {
-                byte pcId    = kv.Key;
-                byte[] bytes = kv.Value.ToArray();
+                if (!cmdBufs.TryGetValue(pcId, out var cmdBuf)) continue;
 
                 DicomDataset cmd;
-                try { cmd = DicomDataset.FromBytes(bytes, implicitVR: true); }
-                catch { continue; }
+                try { cmd = DicomDataset.FromBytes(cmdBuf.ToArray(), implicitVR: true); }
+                catch { cmdBufs.Remove(pcId); cmdDone.Remove(pcId); continue; }
 
-                uint cmdField   = (uint)cmd.GetInt(DicomTag.CommandField);
-                uint dataSetInd = (uint)cmd.GetInt(DicomTag.CommandDataSetType);
-                bool hasDataset = (dataSetInd != CommandDataSetNone);
+                // CommandDataSetType 0x0101 = no dataset; anything else = dataset follows
+                ushort dataSetType = cmd.GetUS(DicomTag.CommandDataSetType);
+                bool hasDataset    = dataSetType != CommandDataSetNone;
 
-                if (hasDataset && !dataBuffers.ContainsKey(pcId)) continue; // wait for data
+                // If dataset expected but its last fragment not yet received, wait
+                if (hasDataset && !dataDone.Contains(pcId)) continue;
+
+                // Ready — clean up reassembly state
+                cmdBufs.Remove(pcId);
+                cmdDone.Remove(pcId);
 
                 DicomDataset? dataset = null;
-                if (hasDataset && dataBuffers.TryGetValue(pcId, out var dBuf))
+                if (hasDataset && dataBufs.TryGetValue(pcId, out var dBuf))
                 {
                     bool implicitVr = _acceptedPCs.TryGetValue(pcId, out string? ts)
                         && ts == DicomUids.ImplicitVRLittleEndian;
                     dataset = DicomDataset.FromBytes(dBuf.ToArray(), implicitVr);
-                    dataBuffers.Remove(pcId);
+                    dataBufs.Remove(pcId);
+                    dataDone.Remove(pcId);
                 }
 
-                cmdBuffers.Remove(pcId);
-
+                ushort cmdField = cmd.GetUS(DicomTag.CommandField);
                 try
                 {
                     await DispatchDimse(stream, pcId, cmd, dataset, ct);
@@ -180,8 +183,8 @@ internal sealed class DicomConnection
     private async Task DispatchDimse(NetworkStream stream, byte pcId,
         DicomDataset cmd, DicomDataset? dataset, CancellationToken ct)
     {
-        uint cmdField = (uint)cmd.GetInt(DicomTag.CommandField);
-        uint msgId    = (uint)cmd.GetInt(DicomTag.MessageID);
+        uint cmdField = cmd.GetUS(DicomTag.CommandField);
+        uint msgId    = cmd.GetUS(DicomTag.MessageID);
 
         switch (cmdField)
         {
@@ -288,7 +291,9 @@ internal sealed class DicomConnection
     private async Task SendDatasetAsync(NetworkStream stream, byte pcId,
         DicomDataset ds, CancellationToken ct)
     {
-        byte[] bytes = ds.ToBytes(); // Explicit VR LE
+        bool implicitVR = _acceptedPCs.TryGetValue(pcId, out string? ts)
+            && ts == DicomUids.ImplicitVRLittleEndian;
+        byte[] bytes = implicitVR ? ds.ToBytesImplicit() : ds.ToBytes();
         await SendFragmentsAsync(stream, pcId, bytes, isCommand: false, ct);
     }
 
