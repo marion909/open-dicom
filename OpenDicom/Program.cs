@@ -1,15 +1,17 @@
 using System.Text;
 using Microsoft.Extensions.Configuration.Ini;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.EventLog;
 using OpenDicom;
 using OpenDicom.Dicom;
+using OpenDicom.Logging;
 using OpenDicom.Storage;
 using OpenDicom.Watcher;
-using Serilog;
-using Serilog.Events;
 
 // Determine base directory (handles both development and single-file-publish)
 string baseDir = AppContext.BaseDirectory;
 string iniPath = Path.Combine(baseDir, "service.ini");
+string logDir  = Path.Combine(baseDir, "logs");
 
 // Windows-1252 für GDT-Encoding registrieren
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -17,21 +19,14 @@ Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 // First-run: create default INI if not present
 EnsureIniExists(iniPath, baseDir);
 
-// Bootstrap Serilog early so all startup errors are captured
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
-    .Enrich.FromLogContext()
-    .WriteTo.File(
-        Path.Combine(baseDir, "logs", "opendicom-.log"),
-        rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 30)
-    .CreateBootstrapLogger();
+// Bootstrap: write startup errors to file before host is built
+Directory.CreateDirectory(logDir);
+using var bootstrapLogger = new FileLoggerProvider(logDir);
+var startupLog = bootstrapLogger.CreateLogger("Startup");
+startupLog.LogInformation("OpenDicom starting up. Config: {IniPath}", iniPath);
 
 try
 {
-    Log.Information("OpenDicom starting up. Config: {IniPath}", iniPath);
-
     HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
     // ----------- Configuration -----------
@@ -57,22 +52,24 @@ try
         opts.Worklist.DefaultModality = builder.Configuration["Worklist:DefaultModality"] ?? "*";
     });
 
-    // ----------- Serilog (full) -----------
-    builder.Services.AddSerilog((sp, lc) => lc
-        .MinimumLevel.Information()
-        .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
-        .Enrich.FromLogContext()
-        .WriteTo.File(
-            Path.Combine(baseDir, "logs", "opendicom-.log"),
-            rollingInterval: RollingInterval.Day,
-            retainedFileCountLimit: 30)
-        .WriteTo.EventLog("OpenDicom", manageEventSource: true));
+    // ----------- Logging (File + Windows Event Log) -----------
+    builder.Logging.ClearProviders();
+    builder.Logging.AddProvider(new FileLoggerProvider(logDir));
+    builder.Logging.AddEventLog(new EventLogSettings
+    {
+        SourceName = "OpenDicom",
+        LogName    = "Application",
+        Filter     = (_, level) => level >= LogLevel.Warning
+    });
+    builder.Logging.SetMinimumLevel(LogLevel.Information);
+    builder.Logging.AddFilter("Microsoft", LogLevel.Warning);
 
     // ----------- Windows Service -----------
     builder.Services.AddWindowsService(opts => opts.ServiceName = "OpenDicom");
 
     // ----------- Application Services -----------
     builder.Services.AddSingleton<WorklistStore>();
+    builder.Services.AddSingleton<DicomHandler>();
     builder.Services.AddHostedService<GdtWatcherService>();
     builder.Services.AddHostedService<DicomServerService>();
 
@@ -90,15 +87,12 @@ try
 }
 catch (Exception ex)
 {
-    Log.Fatal(ex, "OpenDicom terminated unexpectedly");
+    startupLog.LogCritical(ex, "OpenDicom terminated unexpectedly");
     return 1;
-}
-finally
-{
-    await Log.CloseAndFlushAsync();
 }
 
 return 0;
+
 
 static void EnsureDirectoriesExist(AppSettings settings)
 {

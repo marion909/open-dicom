@@ -1,66 +1,48 @@
-using FellowOakDicom.Network;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OpenDicom.Network;
 using OpenDicom.Storage;
 
 namespace OpenDicom.Dicom;
 
 /// <summary>
-/// BackgroundService, der den fo-dicom DICOM-Server startet und dessen Lifecycle verwaltet.
+/// BackgroundService that starts and manages the custom DICOM TCP server.
 /// </summary>
 public sealed class DicomServerService : BackgroundService
 {
     private readonly AppSettings _settings;
-    private readonly WorklistStore _worklistStore;
+    private readonly DicomHandler _handler;
     private readonly ILogger<DicomServerService> _logger;
-
-    private IDicomServer? _server;
 
     public DicomServerService(
         IOptions<AppSettings> settings,
-        WorklistStore worklistStore,
+        DicomHandler handler,
         ILogger<DicomServerService> logger)
     {
         _settings = settings.Value;
-        _worklistStore = worklistStore;
-        _logger = logger;
+        _handler  = handler;
+        _logger   = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Dependencies in statische Felder der SCP-Klasse injizieren
-        // (fo-dicom erzeugt SCP-Instanzen ohne DI-Container)
-        CombinedDicomScp.SetDependencies(_worklistStore, _settings, _logger);
-
         _logger.LogInformation(
             "Starting DICOM server on port {Port} with AE-Title '{AeTitle}'",
             _settings.Dicom.Port, _settings.Dicom.AeTitle);
 
+        await using var server = new DicomServer(
+            _settings.Dicom.Port, _handler, _logger);
+
         try
         {
-            _server = DicomServerFactory.Create<CombinedDicomScp>(
-                ipAddress: "0.0.0.0",
-                port: _settings.Dicom.Port);
-
-            // Warten bis der Server tatsächlich lauscht
-            int attempts = 0;
-            while (!_server.IsListening && attempts++ < 50)
-                await Task.Delay(100, stoppingToken);
-
-            if (!_server.IsListening)
-                throw new InvalidOperationException(
-                    $"DICOM server failed to start listening on port {_settings.Dicom.Port}.");
-
-            _logger.LogInformation(
-                "DICOM server is listening on port {Port}.", _settings.Dicom.Port);
-
-            // Laufen bis der Dienst gestoppt wird
+            server.Start();
+            _logger.LogInformation("DICOM server is listening on port {Port}.", _settings.Dicom.Port);
             await Task.Delay(Timeout.Infinite, stoppingToken);
         }
         catch (OperationCanceledException)
         {
-            // Normales Shutdown
+            // Normal shutdown
         }
         catch (Exception ex)
         {
@@ -69,15 +51,7 @@ public sealed class DicomServerService : BackgroundService
         }
         finally
         {
-            _server?.Dispose();
             _logger.LogInformation("DICOM server stopped.");
         }
-    }
-
-    public override async Task StopAsync(CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("DICOM server shutting down...");
-        _server?.Dispose();
-        await base.StopAsync(cancellationToken);
     }
 }

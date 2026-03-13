@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
-using FellowOakDicom;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OpenDicom.DicomCore;
 using OpenDicom.Gdt;
 
 namespace OpenDicom.Storage;
@@ -46,16 +46,16 @@ public sealed class WorklistStore
     /// </summary>
     public IEnumerable<WorklistEntry> FindEntries(DicomDataset query)
     {
-        string? queryPatientId = GetQueryValue(query, DicomTag.PatientID);
-        string? queryPatientName = GetQueryValue(query, DicomTag.PatientName);
-        string? queryAccession = GetQueryValue(query, DicomTag.AccessionNumber);
+        string? queryPatientId    = query.GetString(DicomTag.PatientID)?.Trim();
+        string? queryPatientName  = query.GetString(DicomTag.PatientName)?.Trim();
+        string? queryAccession    = query.GetString(DicomTag.AccessionNumber)?.Trim();
 
-        // Datum aus ScheduledProcedureStepSequence lesen
+        // Date from ScheduledProcedureStepSequence
         string? queryDate = null;
-        if (query.TryGetSequence(DicomTag.ScheduledProcedureStepSequence, out var spss)
-            && spss.Items.Count > 0)
+        if (query.TryGetSequence(DicomTag.ScheduledProcedureStepSequence, out var items)
+            && items.Count > 0)
         {
-            queryDate = GetQueryValue(spss.Items[0], DicomTag.ScheduledProcedureStepStartDate);
+            queryDate = items[0].GetString(DicomTag.ScheduledProcedureStepStartDate)?.Trim();
         }
 
         return _entries.Values.Where(e =>
@@ -79,8 +79,7 @@ public sealed class WorklistStore
 
     private static string? GetQueryValue(DicomDataset dataset, DicomTag tag)
     {
-        if (!dataset.Contains(tag)) return null;
-        string val = dataset.GetString(tag);
+        string? val = dataset.GetString(tag);
         return string.IsNullOrWhiteSpace(val) ? null : val.Trim();
     }
 
